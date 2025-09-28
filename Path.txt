@@ -1,2 +1,1 @@
-/run/media/victor/Games/Jeux/Jeux Windows/Basilisk 2000 Build Tool/Basilisk 2000 Build Tool.exe;Jeux Windows
-/run/media/victor/Games/Jeux/Jeux Windows/MiSide/MiSideFull.exe;Jeux Windows
+

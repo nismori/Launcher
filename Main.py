@@ -15,7 +15,7 @@ app.title("Indie Launcher")
 app.geometry("1920x1080")
 
 # --- Set application icon (taskbar + window) ---
-icon_img = Image.open("picture.jpg")
+icon_img = Image.open("picture.png")
 icon_tk = ImageTk.PhotoImage(icon_img)
 app.iconphoto(True, icon_tk) # noqa
 
@@ -50,9 +50,8 @@ def extract_icon(path_exe, output_name):
 
 
 def launch_game(name, bottle_name):
-    if bottle_name=="Jeux Linux":
+    if bottle_name == "Jeux Linux":
         subprocess.Popen([name])
-        return
     else:
         try:
             command = f'bottles-cli run -b "{bottle_name}" --exe "{name}"'
@@ -95,6 +94,9 @@ def populate_games():
 
         if not os.path.exists(icon_path) and exe_path.lower().endswith(".exe"):
             icon_path = extract_icon(exe_path, f"{game_base_name}_{game_hash_name}")
+        elif not os.path.exists(icon_path):
+            img_default = Image.open("picture.png")
+            img_default.save(icon_path)
 
         img = Image.open(icon_path)
         ctk_img = ctk.CTkImage(img, size=(128, 128)) # if I change the picture myself
@@ -205,7 +207,7 @@ def populate_games():
                 jeux = []
                 for path_line, name in zip(raw_paths, names):
                     jeux.append((path_line, name)) # tuple
-                jeux = sorted(jeux, key=lambda x: x[0].lower())
+                jeux = sorted(jeux, key=lambda x: os.path.basename(x[0]).lower())
             # Rewriting sorted files
             with open("Path.txt", "w", encoding="utf-8") as f_paths, open("Name.txt", "w", encoding="utf-8") as f_names:
                 for path_line, name in jeux:
@@ -299,7 +301,7 @@ def create_tray_icon():
     def on_restore():
         app.deiconify()  # restore the window
 
-    icon_image = Image.open("picture.jpg")
+    icon_image = Image.open("picture.png")
 
     menu = pystray.Menu(
         pystray.MenuItem("Ouvrir", on_restore),

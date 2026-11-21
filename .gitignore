@@ -1,0 +1,7 @@
+# created by virtualenv automatically
+.venv/
+.idea/
+Icons/*
+!Icons/.gitkeep
+Name.txt
+Path.txt

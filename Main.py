@@ -2,6 +2,8 @@ from PIL import Image, ImageTk, ImageEnhance
 import customtkinter as ctk
 import subprocess
 import os
+import glob
+import tempfile
 import hashlib
 import pystray
 import threading
@@ -9,7 +11,7 @@ import tkinter.filedialog as fd
 import tkinter.simpledialog as sd
 from tkinter import messagebox
 
-# --- Create Windows ---
+# --- Create Steam ---
 app = ctk.CTk()
 app.title("Indie Launcher")
 app.geometry("1920x1080")
@@ -19,34 +21,52 @@ icon_img = Image.open("picture.png")
 icon_tk = ImageTk.PhotoImage(icon_img)
 app.iconphoto(True, icon_tk) # noqa
 
+os.makedirs("Icons", exist_ok=True)
+
 
 # --- Extract Icon from .EXE ---
 def extract_icon(path_exe, output_name):
-    ico_path = "temp_icon.ico"
     icons_dir = "Icons"
     os.makedirs(icons_dir, exist_ok=True)
+    best_path = os.path.join(icons_dir, f"{output_name}.png")
 
-    subprocess.run(f'wrestool -x -t14 "{path_exe}" > {ico_path}', shell=True)
-    subprocess.run(f"icotool -x -o . {ico_path}", shell=True)
+    # Temp dir is isolated from the project root (so cleanup never risks
+    # touching picture.png) and removed automatically, even on exception.
+    with tempfile.TemporaryDirectory() as temp_dir:
+        ico_path = os.path.join(temp_dir, "temp_icon.ico")
 
-    # Look for the largest PNG
-    list_png = [png for png in os.listdir('.') if png.endswith('.png')]
-    best_path = None
-    if list_png:
-        best = max(list_png, key=lambda png: Image.open(png).size[0])
-        best_path = os.path.join(icons_dir, f"{output_name}.png")
-        icon = Image.open(best)
-        icon = icon.resize((128, 128), Image.LANCZOS)
-        icon.save(best_path)
+        with open(ico_path, "wb") as ico_file:
+            subprocess.run(["wrestool", "-x", "-t14", path_exe], stdout=ico_file, stderr=subprocess.DEVNULL)
+        subprocess.run(["icotool", "-x", "-o", temp_dir, ico_path], stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL)
 
-        for temp_png in list_png:
-            if os.path.exists(temp_png):
-                os.remove(temp_png)
+        # Sort PNGs from largest to smallest
+        candidates = []
+        for png in glob.glob(os.path.join(temp_dir, "*.png")):
+            try:
+                with Image.open(png) as img:
+                    candidates.append((img.size[0], png))
+            except Exception:
+                continue
+        candidates.sort(reverse=True)
 
-    if os.path.exists(ico_path):
-        os.remove(ico_path)
+        # Take the largest one that is not corrupted
+        for _, png in candidates:
+            try:
+                with Image.open(png) as icon:
+                    icon.resize((128, 128), Image.LANCZOS).save(best_path)
+                return best_path
+            except Exception as e:
+                print(f"Icône corrompue ignorée ({os.path.basename(png)}) : {e}")
 
-    return best_path
+    # Fallback: nothing usable was extracted, reuse the launcher's own icon
+    fallback = os.path.join(os.path.dirname(__file__), "picture.png")
+    if os.path.exists(fallback):
+        with Image.open(fallback) as icon:
+            icon.resize((128, 128), Image.LANCZOS).save(best_path)
+        return best_path
+
+    return None
 
 
 def launch_game(name, bottle_name):
@@ -55,7 +75,12 @@ def launch_game(name, bottle_name):
     else:
         try:
             command = f'bottles-cli run -b "{bottle_name}" --exe "{name}"'
-            subprocess.Popen(command, shell=True)
+            subprocess.Popen(
+                command,
+                shell=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
         except Exception as e:
             print(f"Error : {e}")
 
@@ -84,7 +109,7 @@ def populate_games():
                 if line.strip():
                     parts = line.strip().split(";")
                     exe_path = parts[0]
-                    bottle = parts[1] if len(parts) > 1 else "Jeux Windows"
+                    bottle = parts[1] if len(parts) > 1 else "Jeux Steam"
                     paths.append((exe_path, bottle))
 
     for i, (exe_path, bottle) in enumerate(paths):
@@ -98,7 +123,10 @@ def populate_games():
             img_default = Image.open("picture.png")
             img_default.save(icon_path)
 
-        img = Image.open(icon_path)
+        try:
+            img = Image.open(icon_path)
+        except Exception:
+            img = Image.open("picture.png").resize((128, 128), Image.LANCZOS)
         ctk_img = ctk.CTkImage(img, size=(128, 128)) # if I change the picture myself
         images_refs.append(ctk_img)
 
@@ -107,7 +135,7 @@ def populate_games():
             image=ctk_img,
             text="",
             fg_color="transparent",
-            hover_color="none",
+            hover_color=app.cget("fg_color"),
             command=lambda path=exe_path, b=bottle: launch_game(path, b)
         )
 
@@ -155,8 +183,8 @@ def populate_games():
             fg_color="#C71585",
             hover_color="#8B0A50",
             font=("Arial", 16, "bold"),
-            text="Jeux Windows",
-            command=lambda: set_bottle("Jeux Windows")
+            text="Jeux Steam",
+            command=lambda: set_bottle("Jeux Steam")
         ).pack(pady=5)
 
         ctk.CTkButton(
@@ -170,7 +198,7 @@ def populate_games():
 
         win.grab_set()
         app.wait_window(win)
-        return choix[0] if choix else "Jeux Windows"
+        return choix[0] if choix else "Jeux Steam"
 
     def new_game():
         exe_path = fd.askopenfilename( # noqa
@@ -240,7 +268,7 @@ def populate_games():
 
         # Selector to choose the new image
         new_icon = fd.askopenfilename(
-            title="Sélectionner la nouvelle image carrée",
+            title="Sélectionner cla nouvelle image carrée",
             initialdir="/home/victor/Images/Captures/",
             filetypes=[("Image PNG", "*.png")]
         )
@@ -261,12 +289,77 @@ def populate_games():
         #messagebox.showinfo("Succès", "Image remplacée avec succès.")
         populate_games()
 
+    def delete_game():
+        # Select the game executable
+        exe_selected = fd.askopenfilename(
+            title="Sélectionner le jeu à supprimer",
+            initialdir="/run/media/victor/Games/Jeux/",
+            filetypes=[("Fichiers exécutables", "*.exe *.x86_64")]
+        )
+        if not exe_selected:
+            return
+        elif not (exe_selected.lower().endswith(".exe") or exe_selected.lower().endswith(".x86_64")):
+            messagebox.showerror("Erreur", "Veuillez sélectionner un fichier .exe ou .x86_64 valide.")
+            return
+        exe_selected = os.path.normpath(exe_selected)
+
+        # Read Path.txt and Name.txt
+        path_lines = []
+        if os.path.exists("Path.txt"):
+            with open("Path.txt", "r", encoding="utf-8") as f:
+                path_lines = [line.strip() for line in f if line.strip()]
+        name_lines = []
+        if os.path.exists("Name.txt"):
+            with open("Name.txt", "r", encoding="utf-8") as f:
+                name_lines = [line.strip() for line in f if line.strip()]
+
+        # Find the game matching exactly this executable
+        to_delete = []
+        for idx, path_line in enumerate(path_lines):
+            exe = os.path.normpath(path_line.split(";")[0])
+            if exe == exe_selected:
+                to_delete.append(idx)
+
+        if not to_delete:
+            messagebox.showerror("Erreur", "Ce jeu n'est pas dans la liste.")
+            return
+
+        # Confirmation
+        labels = []
+        for idx in to_delete:
+            exe = path_lines[idx].split(";")[0]
+            labels.append(name_lines[idx] if idx < len(name_lines) else os.path.basename(exe))
+        if not messagebox.askyesno("Confirmation", "Supprimer :\n" + "\n".join(labels) + "\n?"):
+            return
+
+        # Delete the icons (same naming as in populate_games)
+        for idx in to_delete:
+            exe = path_lines[idx].split(";")[0]
+            base = os.path.splitext(os.path.basename(exe))[0]
+            h = hashlib.md5(exe.encode("utf-8")).hexdigest()[:8]
+            icon = os.path.join("Icons", f"{base}_{h}.png")
+            if os.path.exists(icon):
+                os.remove(icon)
+
+        # Rewrite Path.txt and Name.txt without the deleted game
+        with open("Path.txt", "w", encoding="utf-8") as f_paths:
+            for idx, path_line in enumerate(path_lines):
+                if idx not in to_delete:
+                    f_paths.write(f"{path_line}\n")
+        with open("Name.txt", "w", encoding="utf-8") as f_names:
+            for idx, name in enumerate(name_lines):
+                if idx not in to_delete:
+                    f_names.write(f"{name}\n")
+
+        populate_games()
+
     btns_frame = ctk.CTkFrame(frame, fg_color="transparent") # reproduce the configuration of the Notes buttons but with a grid
     btns_frame.grid(row=last_row, column=0, columnspan=games_columns, pady=(760,0), sticky="ew")
     btns_frame.grid_columnconfigure(0, weight=1)
     btns_frame.grid_columnconfigure(1, weight=0)
     btns_frame.grid_columnconfigure(2, weight=0)
-    btns_frame.grid_columnconfigure(3, weight=1)
+    btns_frame.grid_columnconfigure(3, weight=0)
+    btns_frame.grid_columnconfigure(4, weight=1)
 
     btn_new_games = ctk.CTkButton(
         btns_frame,
@@ -284,7 +377,16 @@ def populate_games():
         hover_color="#B200B2",
         command=change_game_image
     )
-    btn_change_image.grid(row=0, column=2)
+    btn_change_image.grid(row=0, column=2, padx=(0, 10))
+
+    btn_delete_game = ctk.CTkButton(
+        btns_frame,
+        text="Supprimer un jeu",
+        fg_color="#8A2BE2",
+        hover_color="#7B1FA2",
+        command=delete_game
+    )
+    btn_delete_game.grid(row=0, column=3)
 
 
 # --- Function to hide the window and show the icon ---
